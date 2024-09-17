@@ -1,0 +1,376 @@
+---
+title: "Inactivity-mediated molecular adaptations: Insights from a novel pre-clinical model of physical activity reduction - Figure 2 and associated analyses"
+author: "Erin Stephenson"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+## load required packages
+library(readxl)
+library(tidyverse)
+library(lubridate)
+## library(rstatix)
+
+se <- function(x) sd(x, na.rm=T)/sqrt(length(x)) ## define function to calculate standard error
+n <- function(x) sum(!is.na(x))                  ## define function to calculate replicates
+average<-function(x) mean(x, na.rm=TRUE)         ## define function to calculate mean when there are missing data
+
+dataIntake<-read_excel(path="CompiledData.xlsx", sheet="IntakeData") %>% # set up dataframe for energy and water intake
+  select(ID, 3:4, 7:16) %>% 
+  mutate(Food1=Food_6.1-Food_6.2,
+         Food2=Food_6.2-Food_6.3, 
+         Period1 = as.numeric(Date_6.2-Date_6.1), Period2 = as.numeric(Date_6.3-Date_6.2),
+         Intake_1=Food1/Period1, Intake_2=Food2/Period2,
+         Food_g= case_when(ID<=312~Intake_1,
+                           between(ID, 313, 317) ~ Intake_2,
+                           between(ID, 318, 322) ~ Intake_1,
+                           between(ID, 323, 325) ~ Intake_2,
+                           between(ID, 700, 800) ~ (Intake_1+Intake_2)/2),
+         Food_J = Food_g*12.9704) %>% 
+  filter(!is.na(Food_J)) %>% 
+  select(ID, Sex, Group, Food_g, Food_J) 
+
+dataIntake$Group <- factor(dataIntake$Group, levels = c("Inactive", "Active","Activity Reduction")) ## set group ordering
+dataIntake$Sex <- factor(dataIntake$Sex, levels = c("Female", "Male")) 
+
+dataCal<-read_excel(path="CompiledData.xlsx", sheet="CalorimetryData") %>% # set up dataframe with stool calorimetry results
+  select(ID, 3:4, 8:9) %>% 
+  filter(!is.na(Gross_Heat_Btu.lb)) %>% 
+  mutate(kJ.g = (Gross_Heat_Btu.lb * 2.326)/1000)  ## convert Btu/lb to kJ/g
+ 
+dataCal$Group <- factor(dataCal$Group, levels = c("Inactive", "Active","Activity Reduction")) ## set group ordering
+dataCal$Sex <- factor(dataCal$Sex, levels = c("Female", "Male"))         
+
+dataInsGluc<-read_excel(path="CompiledData.xlsx", sheet="InsGlucData") %>% # set up dataframe with fasting blood parameters
+  select(ID, 3:4, 8:9) %>% 
+  mutate(Glucose_mmol.L = `Glucose (mg/dL)` * 0.0555, 
+         Insulin_pmol.L = `Insulin (ng/mL)` * 172.18, 
+         Insulin_µIU.mL = Insulin_pmol.L / 6, 
+         HOMA.IR = (Insulin_µIU.mL * Glucose_mmol.L) / 22.5)
+
+dataInsGluc$Group <- factor(dataInsGluc$Group, levels = c("Inactive", "Active","Activity Reduction")) ## set group ordering
+dataInsGluc$Sex <- factor(dataInsGluc$Sex, levels = c("Female", "Male"))  
+
+dataGlycogen<-read_excel(path="CompiledData.xlsx", sheet="GlycogenData")  # set up dataframe with muscle glycogen data
+
+dataGlycogen$Group <- factor(dataGlycogen$Group, levels = c("Inactive", "Active","Activity Reduction")) ## set group ordering
+dataGlycogen$Sex <- factor(dataGlycogen$Sex, levels = c("Female", "Male"))
+  
+## generate summary statistics
+summaryInake<-dataIntake %>% select(-ID) %>% group_by(Sex, Group) %>% 
+ summarize_all(list(mean=mean, se=se, n=n))
+
+summaryCal <-dataCal %>% select(Sex, Group, kJ.g) %>% group_by(Sex, Group) %>% 
+  summarize(mean=mean(kJ.g), se=se(kJ.g), n=n(kJ.g))
+
+summaryInsGluc <- dataInsGluc %>% select(Sex, Group, Insulin_µIU.mL, Glucose_mmol.L, HOMA.IR) %>% group_by(Sex, Group) %>%
+  summarize_all(list(mean=average, se=se, n=n))
+
+summaryGlycogen <- dataGlycogen %>% select(Sex, Group, umol.g) %>% group_by(Sex, Group) %>% 
+  summarize(mean=mean(umol.g, na.rm=TRUE), se=se(umol.g), n=n(umol.g))
+
+```
+
+```{r intake, echo=FALSE}
+ggplot(dataIntake, aes(x=Group, y=Food_J, fill=Group, pch=Group))+
+geom_bar(stat="summary", fun="mean", size=0.5, col="black") +
+  geom_point(stat="identity", size=2)+
+  stat_summary(fun.data = mean_se, geom="errorbar", width=0.3, size=0.5)+ 
+  theme_classic() +
+  scale_fill_manual(values=c("grey70", "black","tomato2"))+     
+  scale_shape_manual(values=c(21, 23, 22))+
+ scale_y_continuous(limits = c(0, 80), breaks=seq(0, 80, 20), expand=c(0,0))+
+  labs(y="Energy Intake (J/d)", x="") +
+  theme(aspect.ratio = 5/2,
+        panel.background = element_blank(), 
+        panel.grid.major = element_blank(), 
+        panel.border=element_blank(), 
+        panel.grid.major.y=element_line(color="#c8c8c8", size=0.05, linetype="dotted"), 
+        legend.position = "bottom",
+        legend.title=element_blank(),
+        legend.text=element_text(size=16, family="Helvetica", color="black"),
+        legend.box.background=element_blank(),
+        legend.background = element_blank(),
+        axis.line.x=element_blank(),
+        axis.text=element_text(size=20, family="Helvetica",color="black"),
+        axis.title=element_text(size=20, family="Helvetica",  color="black"), 
+        axis.text.x=element_blank(), 
+        axis.ticks.x=element_blank(),
+        axis.ticks.y=element_line(color="black", size=0.5, linetype="solid"),
+        strip.background = element_blank(),
+        strip.text=element_text(color="black", size=20, family="Helvetica"))+
+  facet_grid(~Sex, switch="both")
+ggsave("Output/Figures/Energy Intake J.d.pdf",dpi=300, height=5, width=3)
+
+## Check assumptions
+car::leveneTest(Food_J~Group, data=dataIntake %>% filter(Sex=="Female"))
+car::leveneTest(Food_J~Group, data=dataIntake %>% filter(Sex=="Male"))
+shapiro.test(residuals(aov(Food_J~Group, data=dataIntake %>% filter(Sex=="Female"))))
+shapiro.test(residuals(aov(Food_J~Group, data=dataIntake %>% filter(Sex=="Male"))))
+
+summary(aov(Food_J~Group, data=dataIntake %>% filter(Sex=="Female"))) ## p=0.0339
+summary(aov(Food_J~Group, data=dataIntake %>% filter(Sex=="Male")))   ## no differences
+
+TukeyHSD(aov(Food_J~Group, data=dataIntake %>% filter(Sex=="Female"))) ## AvI p=0.1857, ARvI p=0.0281922, ARvA p=0.6179597
+
+ggplot(dataIntake, aes(x=Group, y=Food_g, fill=Group, pch=Group))+
+geom_bar(stat="summary", fun="mean", size=0.5, col="black") +
+  geom_point(stat="identity", size=2)+
+  stat_summary(fun.data = mean_se, geom="errorbar", width=0.3, size=0.5)+ 
+  theme_classic() +
+  scale_fill_manual(values=c("grey70", "black","tomato2"))+     
+  scale_shape_manual(values=c(21, 23, 22))+
+ scale_y_continuous(limits = c(0, 6), breaks=seq(0, 6, 1), expand=c(0,0))+
+  labs(y="Food Intake (g/d)", x="") +
+  theme(aspect.ratio = 5/2,
+        panel.background = element_blank(), 
+        panel.grid.major = element_blank(), 
+        panel.border=element_blank(), 
+        panel.grid.major.y=element_line(color="#c8c8c8", size=0.05, linetype="dotted"), 
+        legend.position = "bottom",
+        legend.title=element_blank(),
+        legend.text=element_text(size=16, family="Helvetica", color="black"),
+        legend.box.background=element_blank(),
+        legend.background = element_blank(),
+        axis.line.x=element_blank(),
+        axis.text=element_text(size=20, family="Helvetica",color="black"),
+        axis.title=element_text(size=20, family="Helvetica",  color="black"), 
+        axis.text.x=element_blank(), 
+        axis.ticks.x=element_blank(),
+        axis.ticks.y=element_line(color="black", size=0.5, linetype="solid"),
+        strip.background = element_blank(),
+        strip.text=element_text(color="black", size=20, family="Helvetica"))+
+  facet_grid(~Sex, switch="both")
+ggsave("Output/Figures/Food Intake g.d.pdf",dpi=300, height=5, width=3)
+
+## Check assumptions
+car::leveneTest(Food_g~Group, data=dataIntake %>% filter(Sex=="Female"))
+car::leveneTest(Food_g~Group, data=dataIntake %>% filter(Sex=="Male"))
+shapiro.test(residuals(aov(Food_g~Group, data=dataIntake %>% filter(Sex=="Female"))))
+shapiro.test(residuals(aov(Food_g~Group, data=dataIntake %>% filter(Sex=="Male"))))
+
+summary(aov(Food_g~Group, data=dataIntake %>% filter(Sex=="Female"))) ## p=0.0339
+summary(aov(Food_g~Group, data=dataIntake %>% filter(Sex=="Male")))   ## no differences
+
+TukeyHSD(aov(Food_g~Group, data=dataIntake %>% filter(Sex=="Female"))) ## AvI p=0.1857, ARvI p=0.0281922, ARvA p=0.6179597
+
+
+```
+
+```{r cal, echo=FALSE}
+ggplot(dataCal, aes(x=Group, y=kJ.g, fill=Group, pch=Group))+
+geom_bar(stat="summary", fun="mean", size=0.5, col="black") +
+  geom_point(stat="identity", size=2)+
+  stat_summary(fun.data = mean_se, geom="errorbar", width=0.3, size=0.5)+ 
+  theme_classic() +
+  scale_fill_manual(values=c("grey70", "black","tomato2"))+     
+  scale_shape_manual(values=c(21, 23, 22))+
+ scale_y_continuous(limits = c(0, 18), breaks=seq(0, 18, 3), expand=c(0,0))+
+  labs(y="Stool energy (kJ/g)", x="") +
+  theme(aspect.ratio = 5/2,
+        panel.background = element_blank(), 
+        panel.grid.major = element_blank(), 
+        panel.border=element_blank(), 
+        panel.grid.major.y=element_line(color="#c8c8c8", size=0.05, linetype="dotted"), 
+        legend.position = "bottom",
+        legend.title=element_blank(),
+        legend.text=element_text(size=16, family="Helvetica", color="black"),
+        legend.box.background=element_blank(),
+        legend.background = element_blank(),
+        axis.line.x=element_blank(),
+        axis.text=element_text(size=20, family="Helvetica",color="black"),
+        axis.title=element_text(size=20, family="Helvetica",  color="black"), 
+        axis.text.x=element_blank(), 
+        axis.ticks.x=element_blank(),
+        axis.ticks.y=element_line(color="black", size=0.5, linetype="solid"),
+        strip.background = element_blank(),
+        strip.text=element_text(color="black", size=20, family="Helvetica"))+
+  facet_grid(~Sex, switch="both")
+ggsave("Output/Figures/Stool_energy_kJ.g.pdf",dpi=300, height=5, width=3)
+
+## Check assumptions
+car::leveneTest(kJ.g~Group, data=dataCal %>% filter(Sex=="Female"))
+car::leveneTest(kJ.g~Group, data=dataCal %>% filter(Sex=="Male"))
+shapiro.test(residuals(aov(kJ.g~Group, data=dataCal %>% filter(Sex=="Female"))))
+shapiro.test(residuals(aov(kJ.g~Group, data=dataCal %>% filter(Sex=="Male"))))
+
+summary(aov(kJ.g~Group, data=dataCal %>% filter(Sex=="Female"))) ## no differences
+summary(aov(kJ.g~Group, data=dataCal %>% filter(Sex=="Male")))   ## no differences
+
+```
+
+```{r fasting-blood, echo=FALSE}
+## plot fasting insulin
+ggplot(dataInsGluc, aes(x=Group, y=Insulin_µIU.mL, fill=Group, pch=Group))+
+geom_bar(stat="summary", fun="mean", size=0.5, col="black") +
+geom_point(stat="identity", size=2)+
+  stat_summary(fun.data = mean_se, geom="errorbar", width=0.3, size=0.5)+ 
+  scale_fill_manual(values=c("grey70", "black","tomato2"))+     #MWU purple #83276b MWU green #009490
+  scale_shape_manual(values=c(21, 23, 22))+
+  scale_y_continuous(limits = c(0, 80), breaks=seq(0, 80, 20), expand=c(0,0))+
+  labs(y="Fasting Insulin (\U00B5IU/mL)", x="") +
+  theme(aspect.ratio = 5/2,
+        panel.background = element_blank(), 
+        panel.grid.major = element_blank(), 
+        panel.border=element_blank(), 
+        panel.grid.major.y=element_line(color="#c8c8c8", size=0.05, linetype="dotted"), 
+        legend.position = "bottom",
+        legend.title=element_blank(),
+        legend.text=element_text(size=16, family="Helvetica", color="black"),
+        legend.box.background=element_blank(),
+        legend.background = element_blank(),
+        axis.line.x=element_blank(),
+        axis.text=element_text(size=20, family="Helvetica",color="black"),
+        axis.title=element_text(size=20, family="Helvetica",  color="black"), 
+        axis.text.x=element_blank(), 
+        axis.ticks.x=element_blank(),
+        axis.ticks.y=element_line(color="black", size=0.5, linetype="solid"),
+        strip.background = element_blank(),
+        strip.text=element_text(color="black", size=20, family="Helvetica"))+
+  facet_grid(~Sex, switch="both")
+ggsave("Output/Figures/Serum Insulin (µU.mL).pdf",dpi=300, height=5, width=3)
+
+## Check assumptions
+car::leveneTest(Insulin_µIU.mL~Group, data=dataInsGluc %>% filter(Sex=="Female"))
+car::leveneTest(Insulin_µIU.mL~Group, data=dataInsGluc %>% filter(Sex=="Male"))
+shapiro.test(residuals(aov(Insulin_µIU.mL~Group, data=dataInsGluc %>% filter(Sex=="Female"))))
+shapiro.test(residuals(aov(Insulin_µIU.mL~Group, data=dataInsGluc %>% filter(Sex=="Male"))))
+
+## anova
+summary(aov(Insulin_µIU.mL~Group, data=dataInsGluc %>% filter(Sex=="Female"))) ## no differences
+summary(aov(Insulin_µIU.mL~Group, data=dataInsGluc %>% filter(Sex=="Male")))   ## no differences
+
+## plot fasting glucose
+ggplot(dataInsGluc, aes(x=Group, y=Glucose_mmol.L, fill=Group, pch=Group))+
+geom_bar(stat="summary", fun="mean", size=0.5, col="black") +
+    geom_point(stat="identity", size=2)+
+  stat_summary(fun.data = mean_se, geom="errorbar", width=0.3, size=0.5)+ 
+  theme_classic() +
+  scale_fill_manual(values=c("grey70", "black","tomato2"))+     #MWU purple #83276b MWU green #009490
+  scale_shape_manual(values=c(21, 23, 22))+
+  scale_y_continuous(limits = c(0, 15), breaks=seq(0, 15, 5), expand=c(0,0))+
+  labs(y="Fasting Glucose (mmol/L)", x="") +
+  theme(aspect.ratio = 5/2,
+        panel.background = element_blank(), 
+        panel.grid.major = element_blank(), 
+        panel.border=element_blank(), 
+        panel.grid.major.y=element_line(color="#c8c8c8", size=0.05, linetype="dotted"), 
+        legend.position = "bottom",
+        legend.title=element_blank(),
+        legend.text=element_text(size=16, family="Helvetica", color="black"),
+        legend.box.background=element_blank(),
+        legend.background = element_blank(),
+        axis.line.x=element_blank(),
+        axis.text=element_text(size=20, family="Helvetica",color="black"),
+        axis.title=element_text(size=20, family="Helvetica",  color="black"), 
+        axis.text.x=element_blank(), 
+        axis.ticks.x=element_blank(),
+        axis.ticks.y=element_line(color="black", size=0.5, linetype="solid"),
+        strip.background = element_blank(),
+        strip.text=element_text(color="black", size=20, family="Helvetica"))+
+  facet_grid(~Sex, switch="both")
+ggsave("Output/Figures/Blood Glucose (mmol.L).pdf",dpi=300, width=3, height=5)
+
+## Check assumptions
+car::leveneTest(Glucose_mmol.L~Group, data=dataInsGluc %>% filter(Sex=="Female"))
+car::leveneTest(Glucose_mmol.L~Group, data=dataInsGluc %>% filter(Sex=="Male"))
+shapiro.test(residuals(aov(Glucose_mmol.L~Group, data=dataInsGluc %>% filter(Sex=="Female"))))
+shapiro.test(residuals(aov(Glucose_mmol.L~Group, data=dataInsGluc %>% filter(Sex=="Male"))))
+
+## anova
+summary(aov(Glucose_mmol.L~Group, data=dataInsGluc %>% filter(Sex=="Female"))) ## no differences
+summary(aov(Glucose_mmol.L~Group, data=dataInsGluc %>% filter(Sex=="Male")))   ## no differences
+
+## plot HOMA-IR
+ggplot(dataInsGluc, aes(x=Group, y=HOMA.IR, fill=Group, pch=Group))+
+geom_bar(stat="summary", fun="mean", size=0.5, col="black") +
+    geom_point(stat="identity", size=2)+
+  stat_summary(fun.data = mean_se, geom="errorbar", width=0.3, size=0.5)+ 
+  theme_classic() +
+  scale_fill_manual(values=c("grey70", "black","tomato2"))+     #MWU purple #83276b MWU green #009490
+  scale_shape_manual(values=c(21, 23, 22))+
+  scale_y_continuous(limits = c(0, 30), breaks=seq(0, 30, 5), expand=c(0,0))+
+  labs(y="HOMA-IR", x="") +
+  theme(aspect.ratio = 5/2,
+        panel.background = element_blank(), 
+        panel.grid.major = element_blank(), 
+        panel.border=element_blank(), 
+        panel.grid.major.y=element_line(color="#c8c8c8", size=0.05, linetype="dotted"), 
+        legend.position = "bottom",
+        legend.title=element_blank(),
+        legend.text=element_text(size=16, family="Helvetica", color="black"),
+        legend.box.background=element_blank(),
+        legend.background = element_blank(),
+        axis.line.x=element_blank(),
+        axis.text=element_text(size=20, family="Helvetica",color="black"),
+        axis.title=element_text(size=20, family="Helvetica",  color="black"), 
+        axis.text.x=element_blank(), 
+        axis.ticks.x=element_blank(),
+        axis.ticks.y=element_line(color="black", size=0.5, linetype="solid"),
+        strip.background = element_blank(),
+        strip.text=element_text(color="black", size=20, family="Helvetica"))+
+  facet_grid(~Sex, switch="both")
+ggsave("Output/Figures/HOMA-IR.pdf",height=5, width=3, dpi=300)
+
+## Check assumptions
+car::leveneTest(HOMA.IR~Group, data=dataInsGluc %>% filter(Sex=="Female"))
+car::leveneTest(HOMA.IR~Group, data=dataInsGluc %>% filter(Sex=="Male"))
+shapiro.test(residuals(aov(HOMA.IR~Group, data=dataInsGluc %>% filter(Sex=="Female"))))
+shapiro.test(residuals(aov(HOMA.IR~Group, data=dataInsGluc %>% filter(Sex=="Male"))))
+
+## anova
+summary(aov(HOMA.IR~Group, data=dataInsGluc %>% filter(Sex=="Female"))) ## no differences p=0.197
+summary(aov(HOMA.IR~Group, data=dataInsGluc %>% filter(Sex=="Male")))   ## no differences
+
+```
+
+```{r glycogen, echo=FALSE}
+ggplot(dataGlycogen, aes(x=Group, y=umol.g, fill=Group, pch=Group))+
+geom_bar(stat="summary", fun="mean", size=0.5, col="black") +
+    geom_point(stat="identity", size=2)+
+  stat_summary(fun.data = mean_se, geom="errorbar", width=0.3, size=0.5)+ 
+  theme_classic() +
+  scale_fill_manual(values=c("grey70", "black","tomato2"))+     #MWU purple #83276b MWU green #009490
+  scale_shape_manual(values=c(21, 23, 22))+
+  scale_y_continuous(limits = c(0, 20), breaks=seq(0, 20, 5), expand=c(0,0))+
+  labs(y="Fasting Glycogen \n (\U00B5mol glucose/g muscle)", x="") +
+  theme(aspect.ratio = 5/2,
+        panel.background = element_blank(), 
+        panel.grid.major = element_blank(), 
+        panel.border=element_blank(), 
+        panel.grid.major.y=element_line(color="#c8c8c8", size=0.05, linetype="dotted"), 
+        legend.position = "bottom",
+        legend.title=element_blank(),
+        legend.text=element_text(size=16, family="Helvetica", color="black"),
+        legend.box.background=element_blank(),
+        legend.background = element_blank(),
+        axis.line.x=element_blank(),
+        axis.text=element_text(size=20, family="Helvetica",color="black"),
+        axis.title=element_text(size=20, family="Helvetica",  color="black"), 
+        axis.text.x=element_blank(), 
+        axis.ticks.x=element_blank(),
+        axis.ticks.y=element_line(color="black", size=0.5, linetype="solid"),
+        strip.background = element_blank(),
+        strip.text=element_text(color="black", size=20, family="Helvetica"))+
+  facet_grid(~Sex, switch="both")
+ggsave("Output/Figures/Muscle Glycogen umol.g.pdf",height=5, width=3, dpi=300)
+
+## Check assumptions
+car::leveneTest(umol.g~Group, data=dataGlycogen %>% filter(Sex=="Female"))
+car::leveneTest(umol.g~Group, data=dataGlycogen %>% filter(Sex=="Male"))
+shapiro.test(residuals(aov(umol.g~Group, data=dataGlycogen %>% filter(Sex=="Female"))))
+shapiro.test(residuals(aov(umol.g~Group, data=dataGlycogen %>% filter(Sex=="Male"))))
+
+## anova
+summary(aov(umol.g~Group, data=dataGlycogen %>% filter(Sex=="Female"))) ## p=0.0373
+summary(aov(umol.g~Group, data=dataGlycogen %>% filter(Sex=="Male")))   ## p=0.292
+
+TukeyHSD(aov(umol.g~Group, data=dataGlycogen %>% filter(Sex=="Female"))) ## I v AR p=0.0352801, I v A p=0.123608
+
+```
+
+
+

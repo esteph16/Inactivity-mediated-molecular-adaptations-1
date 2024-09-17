@@ -1,0 +1,531 @@
+---
+title: "Inactivity-mediated molecular adaptations: Insights from a novel pre-clinical model of physical activity reduction - Figure 1 and associated analyses"
+author: "Erin Stephenson"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+## load required packages
+library(readxl)
+library(tidyverse)
+library(rstatix)
+library(lme4)
+library(emmeans)
+
+se <- function(x) sd(x, na.rm=T)/sqrt(length(x)) ## define function to calculate standard error
+n <- function(x) sum(!is.na(x))                  ## define function to calculate replicates
+
+dataRun<-read_excel(path="CompiledData.xlsx", sheet="RunData") %>% ## set up dataframe with max test results
+  select(ID, 3:4, 9:11, 13:15, 17:19) %>% 
+  pivot_longer(cols=4:12, names_to="Parameter", values_to="Values") %>% 
+  separate(Parameter, into=c("Parameter","Week"), sep="([_])", remove=TRUE, convert=TRUE, extra="warn", fill="warn") %>% 
+  pivot_wider(values_from=Values, names_from=Parameter) 
+  
+dataRun$Group <- factor(dataRun$Group, levels = c("Inactive", "Active","Activity Reduction")) ## set group ordering
+dataRun$Sex <- factor(dataRun$Sex, levels = c("Female", "Male"))
+
+dataBM<-read_excel(path="CompiledData.xlsx", sheet="BodyMassData") %>% ## set up dataframe for body weights
+  select(ID, 3:4, matches("Weight_")) %>% 
+  pivot_longer(cols=4:16, names_to="Week", values_to="Weight") %>% 
+  separate(Week, into=c("Parameter","Day"), sep="([_])", remove=TRUE, convert=TRUE, extra="warn", fill="warn") %>% 
+  select(-Parameter) %>% 
+  mutate(Day = case_when(Day==0.0~0,
+                         Day==1.1~3,
+                         Day==1.2~7,
+                         Day==2.1~10,
+                         Day==2.2~14,
+                         Day==3.1~17,
+                         Day==3.2~21,
+                         Day==4.1~24,
+                         Day==4.2~28,
+                         Day==5.1~31,
+                         Day==5.2~35,
+                         Day==6.1~38,
+                         Day==6.2~42))
+  
+dataBM$Group <- factor(dataBM$Group, levels = c("Inactive", "Active","Activity Reduction")) ## set group ordering
+dataBM$Sex <- factor(dataBM$Sex, levels = c("Female", "Male"))
+
+dataDeltaBM<-dataBM %>%   ## set up dataframe for change in body mass 
+  pivot_wider(names_from=Day, values_from=Weight) %>% 
+  select(1:4,`31`,`42`) %>% 
+  mutate(delta4 = `31`-`0`, 
+         delta6 = `42`-`31`) %>% 
+  select(-`0`, -`31`,-`42`) %>% 
+  filter(!is.na(delta4))
+
+dataDeltaBM$Group <- factor(dataDeltaBM$Group, levels = c("Inactive", "Active","Activity Reduction")) ## set group ordering
+dataDeltaBM$Sex <- factor(dataDeltaBM$Sex, levels = c("Female", "Male"))
+
+dataTissues<-read_excel(path="CompiledData.xlsx", sheet="TissueMassData") %>%   ## set up dataframe for adipose & muscle weights
+  select(ID, 3:4, 8:14) %>% 
+  pivot_longer(cols=5:10, names_to="Tissue", values_to="mg") %>% 
+  mutate(Type = case_when(Tissue == "rpWAT"~"Adipose",
+                          Tissue == "gWAT"~"Adipose",
+                          Tissue == "iWAT"~"Adipose",
+                          TRUE~"Muscle"))
+
+dataTissues$Group <- factor(dataTissues$Group, levels = c("Inactive", "Active","Activity Reduction")) ## set group ordering
+dataTissues$Sex <- factor(dataTissues$Sex, levels = c("Female", "Male"))
+dataTissues$Tissue <-factor(dataTissues$Tissue, levels=c("iWAT", "rpWAT", "gWAT", "Quad","TS","TA"))
+
+## generate summary statistics
+workSummary <-dataRun %>% 
+  select(-ID) %>% 
+  filter(!is.na(Weight)) %>% 
+  group_by(Sex, Group, Week) %>% 
+  summarize_all(list(mean=mean, se=se, n=n))
+
+weightSummary<-dataBM %>% 
+  select(-ID) %>% 
+  filter(!is.na(Weight)) %>% 
+  group_by(Sex, Group, Day) %>% 
+  summarize_all(list(mean=mean, se=se, n=n))
+
+deltaWeightSummary<-dataDeltaBM %>% 
+  select(-ID) %>% 
+  group_by(Sex, Group) %>% 
+  summarize_all(list(mean=mean, se=se, n=n))
+
+tissuesSummary<-dataTissues %>% 
+  select(-ID, -Type, -Fasting_weight) %>%
+   group_by(Sex, Group, Tissue) %>% 
+  summarize_all(list(mean=mean, se=se, n=n))
+  
+```
+
+```{r work, echo=FALSE}
+ggplot(dataRun, aes(x=Week, y=Work, fill=Group, color=Group,pch=Group))+
+  geom_point(stat="identity", size=1.5, fill="white")+ 
+  geom_line(stat="summary", fun="mean", size=1) +
+  geom_point(stat="summary",fun="mean",size=3)+
+  stat_summary(fun.data = mean_se, geom="errorbar", width=0.3, size=1)+ 
+theme_classic() +
+  scale_fill_manual(values=c("grey70", "black","tomato2"))+     
+  scale_color_manual(values=c("grey70", "black","tomato2"))+
+  scale_shape_manual(values=c(21, 23, 22))+
+  scale_y_continuous(limits = c(0, 15), breaks=seq(0, 15, 3), expand=c(0,0))+
+  scale_x_continuous(limits = c(-0.5, 6.5), breaks=seq(0, 6, 2), expand=c(0,0))+
+  labs(y="Work (J)", x="Study Period (Week)") +
+      theme(
+        panel.background = element_blank(), 
+        panel.grid.major = element_blank(), 
+        panel.border=element_blank(), 
+        panel.grid.major.y=element_line(color="#c8c8c8", size=0.05, linetype="dotted"), 
+        legend.position = "bottom",
+        legend.title=element_blank(),
+        legend.text=element_text(size=16, family="Helvetica", color="black"),
+        legend.box.background=element_blank(),
+        legend.background = element_blank(),
+        axis.text=element_text(size=20, family="Helvetica",color="black"),
+        axis.title=element_text(size=20, family="Helvetica",  color="black"), 
+        axis.ticks=element_line(color="black", size=1, linetype="solid"),
+        strip.background = element_blank(),
+        strip.text=element_text(color="black", size=20, family="Helvetica"),
+        panel.spacing= unit(1,"lines"))+
+  facet_grid(~Sex)
+ggsave("Output/Figures/Work_J Linegraph.pdf",dpi=300, height=4, width=6)
+
+## assess all weeks together using mixed linear models & likelihood ratio tests
+workBase<-lmer(Work~as.factor(Week) + (1|ID), data=dataRun %>% filter(Sex=="Female"), REML=F)
+workGroup<-lmer(Work~as.factor(Week) + Group + (1|ID), data=dataRun %>% filter(Sex=="Female"), REML=F)
+anova(workBase,workGroup) ## p=0.002881
+emmeans(workGroup, pairwise~Group) ## inactive v active p=0.003, inactive v AR p=0.0778, active v AR p=0.4914
+
+workBase<-lmer(Work~as.factor(Week) + (1|ID), data=dataRun %>% filter(Sex=="Male"), REML=F)
+workGroup<-lmer(Work~as.factor(Week) + Group + (1|ID), data=dataRun %>% filter(Sex=="Male"), REML=F)
+anova(workBase,workGroup) ## p=0.04306
+emmeans(workGroup, pairwise~Group) ##inactive v active p=0.0440, inactive v AR p=0.5784, active v AR p=0.3046
+
+ppoBase<-lmer(PeakPower~as.factor(Week) + (1|ID), data=dataRun %>% filter(Sex=="Female"), REML=F)
+ppoGroup<-lmer(PeakPower~as.factor(Week) + Group + (1|ID), data=dataRun %>% filter(Sex=="Female"), REML=F)
+anova(ppoBase,ppoGroup) ## p=0.005725
+emmeans(ppoGroup, pairwise~Group) ## inactive v active p=0.0071, inactive v AR p=0.0834, active v AR p=0.6402
+
+ppoBase<-lmer(PeakPower~as.factor(Week) + (1|ID), data=dataRun %>% filter(Sex=="Male"), REML=F)
+ppoGroup<-lmer(PeakPower~as.factor(Week) + Group + (1|ID), data=dataRun %>% filter(Sex=="Male"), REML=F)
+anova(ppoBase,ppoGroup) ## p=0.0978 not significant
+emmeans(ppoGroup, pairwise~Group) ## inactive v active p=0.1013, inactive v AR p=0.4205, active v AR p=0.6789
+
+## assess each week separately
+## check assumptions for each timepoint
+car::leveneTest(Work~Group, data=dataRun %>% filter(Sex=="Female", Week==0))
+car::leveneTest(Work~Group, data=dataRun %>% filter(Sex=="Female", Week==4)) 
+car::leveneTest(Work~Group, data=dataRun %>% filter(Sex=="Female", Week==6))
+car::leveneTest(Work~Group, data=dataRun %>% filter(Sex=="Male", Week==0))
+car::leveneTest(Work~Group, data=dataRun %>% filter(Sex=="Male", Week==4))
+car::leveneTest(Work~Group, data=dataRun %>% filter(Sex=="Male", Week==6))
+shapiro.test(residuals(aov(Work~Group, data=dataRun %>% filter(Sex=="Female", Week==0))))
+shapiro.test(residuals(aov(Work~Group, data=dataRun %>% filter(Sex=="Female", Week==4))))
+shapiro.test(residuals(aov(Work~Group, data=dataRun %>% filter(Sex=="Female", Week==6))))
+shapiro.test(residuals(aov(Work~Group, data=dataRun %>% filter(Sex=="Male", Week==0))))
+shapiro.test(residuals(aov(Work~Group, data=dataRun %>% filter(Sex=="Male", Week==4)))) ## significant
+shapiro.test(residuals(aov(Work~Group, data=dataRun %>% filter(Sex=="Male", Week==6))))
+
+## ANOVA or Kruskal-Wallis tests
+summary(aov(Work~Group, data=dataRun %>% filter(Sex=="Female", Week==0)))
+summary(aov(Work~Group, data=dataRun %>% filter(Sex=="Female", Week==4))) ## significant
+summary(aov(Work~Group, data=dataRun %>% filter(Sex=="Female", Week==6))) ## significant
+summary(aov(Work~Group, data=dataRun %>% filter(Sex=="Male", Week==0)))
+kruskal.test(Work~Group, data=dataRun %>% filter(Sex=="Male", Week==4))
+summary(aov(Work~Group, data=dataRun %>% filter(Sex=="Male", Week==6))) ## significant
+
+## Tukey or Dunn tests
+TukeyHSD(aov(Work~Group, data=dataRun %>% filter(Sex=="Female", Week==4))) ## differences
+TukeyHSD(aov(Work~Group, data=dataRun %>% filter(Sex=="Female", Week==6))) ## differences
+TukeyHSD(aov(Work~Group, data=dataRun %>% filter(Sex=="Male", Week==6)))   ## differences
+
+```
+```{r weights, echo=FALSE}
+ggplot(dataBM, aes(x=Day, y=Weight, fill = Group, color=Group, pch=Group))+
+  geom_vline(xintercept=28, col="blue", size=1, alpha=0.2)+
+  geom_point(stat="identity", size=1, fill="white", aes(pch=Group))+
+  geom_line(stat="summary", fun="mean", size=1) +
+  stat_summary(fun.data = mean_se, geom="errorbar", width=2, size=1)+ 
+  geom_point(stat="summary", fun= "mean", size=3)+
+    scale_fill_manual(values=c("grey70", "black","tomato2"))+
+  scale_color_manual(values=c("grey70", "black","tomato2"))+
+  scale_shape_manual(values=c(21, 23, 22))+
+  scale_y_continuous(limits=c(16,36), breaks=seq(16,36,4), expand=c(0,0))+
+  scale_x_continuous(limits=c(0,42), breaks=seq(0,42,7), expand=c(0.05,0.05))+
+  labs(y="Body Mass (g)",
+       x="Study Period (Day)")+
+ theme(panel.background = element_blank(), 
+        panel.grid.major = element_blank(), 
+        panel.border=element_blank(), 
+        panel.grid.major.y=element_line(color="#c8c8c8", size=0.05, linetype="dotted"), 
+        legend.position = "bottom",
+        legend.title=element_blank(),
+        legend.text=element_text(size=16, family="Helvetica", color="black"),
+        legend.box.background=element_blank(),
+        legend.background = element_blank(),
+        axis.line=element_line(color="black", size=0.5, linetype="solid"),
+        axis.text=element_text(size=20, family="Helvetica",color="black"),
+        axis.title=element_text(size=20, family="Helvetica",  color="black"), 
+        axis.ticks.x=element_line(color="black", size=0.5, linetype="solid"),
+        axis.ticks.y=element_line(color="black", size=0.5, linetype="solid"),
+        strip.background = element_blank(),
+        strip.text=element_text(color="black", size=20, family="Helvetica"),
+        panel.spacing=unit(2,"lines"))+
+  facet_grid(~Sex)
+ggsave("Output/Figures/BodyMass linegraph.pdf",  height = 4, width=6, dpi=300)       
+
+## assess all weeks together using mixed linear models & likelihood ratio tests
+bmBase<-lmer(Weight~as.factor(Day) + (1|ID), data=dataBM %>% filter(Sex=="Female"), REML=F)
+bmGroup<-lmer(Weight~as.factor(Day) + Group + (1|ID), data=dataBM %>% filter(Sex=="Female"), REML=F)
+anova(bmBase,bmGroup) ## p=0.8953
+
+bmBase<-lmer(Weight~as.factor(Day) + (1|ID), data=dataBM %>% filter(Sex=="Male"), REML=F)
+bmGroup<-lmer(Weight~as.factor(Day) + Group + (1|ID), data=dataBM %>% filter(Sex=="Male"), REML=F)
+anova(bmBase,bmGroup) ## p=0.5052
+
+## compare end point weights only
+car::leveneTest(Weight~Group, data=dataBM %>% filter(Sex=="Female",Day==42))
+car::leveneTest(Weight~Group, data=dataBM %>% filter(Sex=="Male",Day==42))
+shapiro.test(residuals(aov(Weight~Group, data=dataBM %>% filter(Sex=="Female", Day==42))))
+shapiro.test(residuals(aov(Weight~Group, data=dataBM %>% filter(Sex=="Male", Day==42))))
+
+summary(aov(Weight~Group, data=dataBM %>% filter(Sex=="Female", Day==42)))
+summary(aov(Weight~Group, data=dataBM %>% filter(Sex=="Male", Day==42)))
+
+## plot change in body mass
+ggplot(dataDeltaBM, aes(x=Group, y=delta4, fill=Group, pch=Group))+
+geom_bar(stat="summary", fun="mean", size=0.5, col="black") +
+  geom_point(stat="identity", size=2)+
+  stat_summary(fun.data = mean_se, geom="errorbar", width=0.3, size=0.5)+ 
+  theme_classic() +
+  scale_fill_manual(values=c("grey70", "black","tomato2"))+     
+  scale_shape_manual(values=c(21, 23, 22))+
+ scale_y_continuous(limits = c(-0.2, 7), breaks=seq(0, 7, 1), expand=c(0,0))+
+  labs(y="\u0394 Body Mass Weeks 0-4", x="") +
+  theme(aspect.ratio = 5/2,
+        panel.background = element_blank(), 
+        panel.grid.major = element_blank(), 
+        panel.border=element_blank(), 
+        panel.grid.major.y=element_line(color="#c8c8c8", size=0.05, linetype="dotted"), 
+        legend.position = "bottom",
+        legend.title=element_blank(),
+        legend.text=element_text(size=16, family="Helvetica", color="black"),
+        legend.box.background=element_blank(),
+        legend.background = element_blank(),
+        axis.line.x=element_blank(),
+        axis.text=element_text(size=20, family="Helvetica",color="black"),
+        axis.title=element_text(size=20, family="Helvetica",  color="black"), 
+        axis.text.x=element_blank(), 
+        axis.ticks.x=element_blank(),
+        axis.ticks.y=element_line(color="black", size=0.5, linetype="solid"),
+        strip.background = element_blank(),
+        strip.text=element_text(color="black", size=20, family="Helvetica"))+
+  facet_grid(~Sex, switch="both")
+ggsave("Output/Figures/Change in body mass 0-4 weeks.pdf",dpi=300, height=5, width=3)
+
+ggplot(dataDeltaBM, aes(x=Group, y=delta6, fill=Group, pch=Group))+
+geom_bar(stat="summary", fun="mean", size=0.5, col="black") +
+  geom_point(stat="identity", size=2)+
+  stat_summary(fun.data = mean_se, geom="errorbar", width=0.3, size=0.5)+ 
+  theme_classic() +
+  scale_fill_manual(values=c("grey70", "black","tomato2"))+     
+  scale_shape_manual(values=c(21, 23, 22))+
+ scale_y_continuous(limits = c(-1, 5), breaks=seq(-1, 5, 1), expand=c(0,0))+
+  labs(y="\u0394 Body Mass Weeks 4-6", x="") +
+  theme(aspect.ratio = 5/2,
+        panel.background = element_blank(), 
+        panel.grid.major = element_blank(), 
+        panel.border=element_blank(), 
+        panel.grid.major.y=element_line(color="#c8c8c8", size=0.05, linetype="dotted"), 
+        legend.position = "bottom",
+        legend.title=element_blank(),
+        legend.text=element_text(size=16, family="Helvetica", color="black"),
+        legend.box.background=element_blank(),
+        legend.background = element_blank(),
+        axis.line.x=element_blank(),
+        axis.text=element_text(size=20, family="Helvetica",color="black"),
+        axis.title=element_text(size=20, family="Helvetica",  color="black"), 
+        axis.text.x=element_blank(), 
+        axis.ticks.x=element_blank(),
+        axis.ticks.y=element_line(color="black", size=0.5, linetype="solid"),
+        strip.background = element_blank(),
+        strip.text=element_text(color="black", size=20, family="Helvetica"))+
+  facet_grid(~Sex, switch="both")
+ggsave("Output/Figures/Change in body mass 4-6 weeks.pdf",dpi=300, height=5, width=3)
+
+## check assumptions
+car::leveneTest(delta4~Group, data=dataDeltaBM %>% filter(Sex=="Female")) 
+car::leveneTest(delta6~Group, data=dataDeltaBM %>% filter(Sex=="Female")) 
+car::leveneTest(delta4~Group, data=dataDeltaBM %>% filter(Sex=="Male")) 
+car::leveneTest(delta6~Group, data=dataDeltaBM %>% filter(Sex=="Male")) 
+shapiro.test(residuals(aov(delta4~Group, data=dataDeltaBM %>% filter(Sex=="Female"))))
+shapiro.test(residuals(aov(delta6~Group, data=dataDeltaBM %>% filter(Sex=="Female"))))
+shapiro.test(residuals(aov(delta4~Group, data=dataDeltaBM %>% filter(Sex=="Male"))))
+shapiro.test(residuals(aov(delta6~Group, data=dataDeltaBM %>% filter(Sex=="Male"))))
+
+## ANOVA
+summary(aov(delta4~Group, data=dataDeltaBM %>% filter(Sex=="Female")))
+summary(aov(delta6~Group, data=dataDeltaBM %>% filter(Sex=="Female")))
+summary(aov(delta4~Group, data=dataDeltaBM %>% filter(Sex=="Male")))
+summary(aov(delta6~Group, data=dataDeltaBM %>% filter(Sex=="Male"))) ##p=0.00284
+
+## posthoc
+TukeyHSD(aov(delta6~Group, data=dataDeltaBM %>% filter(Sex=="Male"))) ## active v AR p=0.0019307
+
+```
+
+```{r tissues, echo=FALSE}
+ggplot(dataTissues %>% filter(Type=="Adipose"), aes(x=Group, y=mg, fill=Group, pch=Group))+
+geom_bar(stat="summary", fun="mean", size=0.5, col="black") +
+    geom_point(stat="identity", size=2)+
+  stat_summary(fun.data = mean_se, geom="errorbar", width=0.3, size=0.5)+ 
+  theme_classic() +
+  scale_fill_manual(values=c("grey70", "black","tomato2"))+     
+  scale_shape_manual(values=c(21, 23, 22))+
+  scale_y_continuous(limits = c(0, 540), breaks=seq(0, 540, 90), expand=c(0,0))+
+  labs(y="Adipose mass (mg)", x="") +
+  theme(aspect.ratio = 5/2,
+        panel.background = element_blank(), 
+        panel.grid.major = element_blank(), 
+        panel.border=element_blank(), 
+        panel.grid.major.y=element_line(color="#c8c8c8", size=0.05, linetype="dotted"), 
+        legend.position = "bottom",
+        legend.title=element_blank(),
+        legend.text=element_text(size=16, family="Helvetica", color="black"),
+        legend.box.background=element_blank(),
+        legend.background = element_blank(),
+        axis.line.x=element_blank(),
+        axis.text=element_text(size=20, family="Helvetica",color="black"),
+        axis.title=element_text(size=20, family="Helvetica",  color="black"), 
+        axis.text.x=element_blank(), 
+        axis.ticks.x=element_blank(),
+        axis.ticks.y=element_line(color="black", size=0.5, linetype="solid"),
+        strip.background = element_blank(),
+        strip.text=element_text(color="black", size=20, family="Helvetica"))+
+  facet_grid(~Sex*Tissue, switch="both")
+ggsave("Output/Figures/Adipose mass (mg).pdf",dpi=300, height=5, width=10)
+
+ggplot(dataTissues %>% filter(Type=="Muscle"), aes(x=Group, y=mg, fill=Group, pch=Group))+
+geom_bar(stat="summary", fun="mean", size=0.5, col="black") +
+    geom_point(stat="identity", size=2)+
+  stat_summary(fun.data = mean_se, geom="errorbar", width=0.3, size=0.5)+ 
+  theme_classic() +
+  scale_fill_manual(values=c("grey70", "black","tomato2"))+    
+  scale_shape_manual(values=c(21, 23, 22))+
+  scale_y_continuous(limits = c(0, 300), breaks=seq(0, 300, 50), expand=c(0,0))+
+  labs(y="Skeletal Muscle mass (mg)", x="") +
+  theme(aspect.ratio = 5/2,
+        panel.background = element_blank(), 
+        panel.grid.major = element_blank(), 
+        panel.border=element_blank(), 
+        panel.grid.major.y=element_line(color="#c8c8c8", size=0.05, linetype="dotted"), 
+        legend.position = "bottom",
+        legend.title=element_blank(),
+        legend.text=element_text(size=16, family="Helvetica", color="black"),
+        legend.box.background=element_blank(),
+        legend.background = element_blank(),
+        axis.line.x=element_blank(),
+        axis.text=element_text(size=20, family="Helvetica",color="black"),
+        axis.title=element_text(size=20, family="Helvetica",  color="black"), 
+        axis.text.x=element_blank(), 
+        axis.ticks.x=element_blank(),
+        axis.ticks.y=element_line(color="black", size=0.5, linetype="solid"),
+        strip.background = element_blank(),
+        strip.text=element_text(color="black", size=20, family="Helvetica"))+
+  facet_grid(~Sex*Tissue, switch="both")
+ggsave("Output/Figures/Muscle mass (mg).pdf",dpi=300, height=5, width=10)
+
+## check assumptions
+car::leveneTest(mg~Group, data=dataTissues %>% filter(Sex=="Female", Tissue=="iWAT")) 
+car::leveneTest(mg~Group, data=dataTissues %>% filter(Sex=="Female", Tissue=="rpWAT")) 
+car::leveneTest(mg~Group, data=dataTissues %>% filter(Sex=="Female", Tissue=="gWAT")) 
+car::leveneTest(mg~Group, data=dataTissues %>% filter(Sex=="Female", Tissue=="Quad")) 
+car::leveneTest(mg~Group, data=dataTissues %>% filter(Sex=="Female", Tissue=="TS")) 
+car::leveneTest(mg~Group, data=dataTissues %>% filter(Sex=="Female", Tissue=="TA")) 
+car::leveneTest(mg~Group, data=dataTissues %>% filter(Sex=="Male", Tissue=="iWAT")) 
+car::leveneTest(mg~Group, data=dataTissues %>% filter(Sex=="Male", Tissue=="rpWAT")) 
+car::leveneTest(mg~Group, data=dataTissues %>% filter(Sex=="Male", Tissue=="gWAT")) 
+car::leveneTest(mg~Group, data=dataTissues %>% filter(Sex=="Male", Tissue=="Quad")) 
+car::leveneTest(mg~Group, data=dataTissues %>% filter(Sex=="Male", Tissue=="TS")) 
+car::leveneTest(mg~Group, data=dataTissues %>% filter(Sex=="Male", Tissue=="TA")) 
+shapiro.test(residuals(aov(mg~Group, data=dataTissues %>% filter(Sex=="Female", Tissue=="iWAT"))))
+shapiro.test(residuals(aov(mg~Group, data=dataTissues %>% filter(Sex=="Female", Tissue=="rpWAT"))))
+shapiro.test(residuals(aov(mg~Group, data=dataTissues %>% filter(Sex=="Female", Tissue=="gWAT"))))
+shapiro.test(residuals(aov(mg~Group, data=dataTissues %>% filter(Sex=="Female", Tissue=="Quad"))))
+shapiro.test(residuals(aov(mg~Group, data=dataTissues %>% filter(Sex=="Female", Tissue=="TS")))) ## significant
+shapiro.test(residuals(aov(mg~Group, data=dataTissues %>% filter(Sex=="Female", Tissue=="TA")))) ## significant
+shapiro.test(residuals(aov(mg~Group, data=dataTissues %>% filter(Sex=="Male", Tissue=="iWAT"))))
+shapiro.test(residuals(aov(mg~Group, data=dataTissues %>% filter(Sex=="Male", Tissue=="rpWAT"))))
+shapiro.test(residuals(aov(mg~Group, data=dataTissues %>% filter(Sex=="Male", Tissue=="gWAT"))))
+shapiro.test(residuals(aov(mg~Group, data=dataTissues %>% filter(Sex=="Male", Tissue=="Quad")))) ## significant
+shapiro.test(residuals(aov(mg~Group, data=dataTissues %>% filter(Sex=="Male", Tissue=="TS")))) 
+shapiro.test(residuals(aov(mg~Group, data=dataTissues %>% filter(Sex=="Male", Tissue=="TA"))))
+
+summary(aov(mg~Group, data=dataTissues %>% filter(Sex=="Female", Tissue=="iWAT")))
+summary(aov(mg~Group, data=dataTissues %>% filter(Sex=="Female", Tissue=="rpWAT")))
+summary(aov(mg~Group, data=dataTissues %>% filter(Sex=="Female", Tissue=="gWAT")))
+summary(aov(mg~Group, data=dataTissues %>% filter(Sex=="Female", Tissue=="Quad")))
+kruskal.test(mg~Group, data=dataTissues %>% filter(Sex=="Female", Tissue=="TS")) ## p=0.01191
+kruskal.test(mg~Group, data=dataTissues %>% filter(Sex=="Female", Tissue=="TA"))
+summary(aov(mg~Group, data=dataTissues %>% filter(Sex=="Male", Tissue=="iWAT"))) ## p=0.0822
+summary(aov(mg~Group, data=dataTissues %>% filter(Sex=="Male", Tissue=="rpWAT")))## p=0.077
+summary(aov(mg~Group, data=dataTissues %>% filter(Sex=="Male", Tissue=="gWAT"))) ## p=0.074
+kruskal.test(mg~Group, data=dataTissues %>% filter(Sex=="Male", Tissue=="Quad"))
+summary(aov(mg~Group, data=dataTissues %>% filter(Sex=="Male", Tissue=="TS")))
+summary(aov(mg~Group, data=dataTissues %>% filter(Sex=="Male", Tissue=="TA")))
+
+dunn_test(mg~Group, p.adjust.method="BH", data=dataTissues %>% filter(Sex=="Female", Tissue=="TS")) ## I v A p=0.0197, I v AR p=0.0197
+
+## Perform ANCOVA on tissue weights with body weight as a covariate - NEED TO CHECK THESE ASSUMPTIONS FOR FEMALE MICE BECAUSE OF SIG RELATIONSHIP BETWEEN BODY WEIGHT AND FAT MASS (NOT AN ISSUE FOR MALES)
+
+library(emmeans)
+dataTissues2<-dataTissues %>% select(-Type) %>% pivot_wider(names_from="Tissue", values_from="mg")
+
+## ANCOVA male iWAT
+# Check assumptions
+dataTissues2 %>% filter(Sex=="Male") %>% anova_test(iWAT ~ Group * Fasting_weight) #determine homogeneity of regression slopes - looking for no interaction between variable of interest and covariate(s)
+
+#fit model, the covariate(s) first
+model <- lm(iWAT ~ Group + Fasting_weight, data = dataTissues2 %>% filter(Sex=="Male")) 
+
+model.metrics<-augment(model) %>% 
+  select(-.hat, -.sigma, -.fitted)
+head(model.metrics, 3)
+
+## check assumptions
+shapiro_test(model.metrics$.resid) ## assess normality of residuals 
+model.metrics %>% levene_test(.resid~Group)## assess homogeneity of variance
+
+model.metrics %>% 
+  filter(abs(.std.resid) > 3) %>% ## Search for outliers; if no rows come up, no outliers present
+  as.data.frame
+
+iWATm<-dataTissues2 %>% filter(Sex=="Male") %>% 
+  anova_test(iWAT~Group + Fasting_weight) %>% as_tibble %>% mutate(Sex= "Male", Tissue = "iWAT")
+
+adj_means<-emmeans_test(formula = iWAT~Group, covariate = Fasting_weight, data=dataTissues2 %>% filter(Sex=="Male"))
+iWATmEMM<-get_emmeans(adj_means)%>% as_tibble %>% as_tibble %>% mutate(Sex= "Male", Tissue = "iWAT") ## Get estimated marginal means for test
+
+## ANCOVA epididymal adipose
+dataTissues2 %>% filter(Sex=="Male") %>% anova_test(gWAT ~ Group * Fasting_weight)
+model <- lm(gWAT ~ Group + Fasting_weight, data = dataTissues2 %>% filter(Sex=="Male")) 
+model.metrics<-augment(model) %>% 
+  select(-.hat, -.sigma, -.fitted)
+head(model.metrics, 3)
+shapiro_test(model.metrics$.resid) 
+model.metrics %>% levene_test(.resid~Group)
+model.metrics %>% 
+  filter(abs(.std.resid) > 3) %>% 
+  as.data.frame
+gWATm<-dataTissues2 %>% filter(Sex=="Male") %>% 
+  anova_test(gWAT~Group + Fasting_weight) %>% as_tibble %>% mutate(Sex= "Male", Tissue = "gWAT")
+adj_means<-emmeans_test(formula = gWAT~Group, covariate = Fasting_weight, data=dataTissues2 %>% filter(Sex=="Male"))
+gWATmEMM<-get_emmeans(adj_means)%>% as_tibble %>% as_tibble %>% mutate(Sex= "Male", Tissue = "gWAT") 
+
+## ANCOVA male retroperitoneal adipose
+dataTissues2 %>% filter(Sex=="Male") %>% anova_test(rpWAT ~ Group * Fasting_weight)
+model <- lm(rpWAT ~ Group + Fasting_weight, data = dataTissues2 %>% filter(Sex=="Male")) 
+model.metrics<-augment(model) %>% 
+  select(-.hat, -.sigma, -.fitted)
+head(model.metrics, 3)
+shapiro_test(model.metrics$.resid) 
+model.metrics %>% levene_test(.resid~Group)
+model.metrics %>% 
+  filter(abs(.std.resid) > 3) %>% 
+  as.data.frame
+rpWATm<-dataTissues2 %>% filter(Sex=="Male") %>% 
+  anova_test(rpWAT~Group + Fasting_weight) %>% as_tibble %>% mutate(Sex= "Male", Tissue = "rpWAT")
+adj_means<-emmeans_test(formula = rpWAT~Group, covariate = Fasting_weight, data=dataTissues2 %>% filter(Sex=="Male"))
+rpWATmEMM<-get_emmeans(adj_means)%>% as_tibble %>% as_tibble %>% mutate(Sex= "Male", Tissue = "rpWAT") 
+
+## ANCOVA female iWAT adipose
+dataTissues2 %>% filter(Sex=="Female") %>% anova_test(iWAT ~ Group * Fasting_weight)
+model <- lm(iWAT ~ Group + Fasting_weight, data = dataTissues2 %>% filter(Sex=="Female")) 
+model.metrics<-augment(model) %>% 
+  select(-.hat, -.sigma, -.fitted)
+head(model.metrics, 3)
+shapiro_test(model.metrics$.resid) 
+model.metrics %>% levene_test(.resid~Group)
+model.metrics %>% 
+  filter(abs(.std.resid) > 3) %>% 
+  as.data.frame
+iWATf<-dataTissues2 %>% filter(Sex=="Female") %>% 
+  anova_test(iWAT~Group + Fasting_weight) %>% as_tibble %>% mutate(Sex= "Female", Tissue = "iWAT")
+adj_means<-emmeans_test(formula = iWAT~Group, covariate = Fasting_weight, data=dataTissues2 %>% filter(Sex=="Female"))
+iWATfEMM<-get_emmeans(adj_means)%>% as_tibble %>% as_tibble %>% mutate(Sex= "Female", Tissue = "iWAT") 
+
+## ANCOVA periuterine adipose
+dataTissues2 %>% filter(Sex=="Female") %>% anova_test(gWAT ~ Group * Fasting_weight)
+model <- lm(gWAT ~ Group + Fasting_weight, data = dataTissues2 %>% filter(Sex=="Female")) 
+model.metrics<-augment(model) %>% 
+  select(-.hat, -.sigma, -.fitted)
+head(model.metrics, 3)
+shapiro_test(model.metrics$.resid) 
+model.metrics %>% levene_test(.resid~Group)
+model.metrics %>% 
+  filter(abs(.std.resid) > 3) %>% 
+  as.data.frame
+gWATf<-dataTissues2 %>% filter(Sex=="Female") %>% 
+  anova_test(gWAT~Group + Fasting_weight) %>% as_tibble %>% mutate(Sex= "Female", Tissue = "gWAT")
+adj_means<-emmeans_test(formula = gWAT~Group, covariate = Fasting_weight, data=dataTissues2 %>% filter(Sex=="Female"))
+gWATfEMM<-get_emmeans(adj_means)%>% as_tibble %>% as_tibble %>% mutate(Sex= "Female", Tissue = "gWAT") 
+
+## ANCOVA Female retroperitoneal adipose
+dataTissues2 %>% filter(Sex=="Female") %>% anova_test(rpWAT ~ Group * Fasting_weight)
+model <- lm(rpWAT ~ Group + Fasting_weight, data = dataTissues2 %>% filter(Sex=="Female")) 
+model.metrics<-augment(model) %>% 
+  select(-.hat, -.sigma, -.fitted)
+head(model.metrics, 3)
+shapiro_test(model.metrics$.resid) 
+model.metrics %>% levene_test(.resid~Group)
+model.metrics %>% 
+  filter(abs(.std.resid) > 3) %>% 
+  as.data.frame
+rpWATf<-dataTissues2 %>% filter(Sex=="Female") %>% 
+  anova_test(rpWAT~Group + Fasting_weight) %>% as_tibble %>% mutate(Sex= "Female", Tissue = "rpWAT")
+adj_means<-emmeans_test(formula = rpWAT~Group, covariate = Fasting_weight, data=dataTissues2 %>% filter(Sex=="Female"))
+rpWATfEMM<-get_emmeans(adj_means)%>% as_tibble %>% as_tibble %>% mutate(Sex= "Female", Tissue = "rpWAT") 
+
+
+```
+
+

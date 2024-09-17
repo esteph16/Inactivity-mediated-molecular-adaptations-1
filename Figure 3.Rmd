@@ -1,0 +1,503 @@
+---
+title: "Inactivity-mediated molecular adaptations: Insights from a novel pre-clinical model of physical activity reduction - Figure 3 and associated analyses"
+author: "Erin Stephenson"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(readxl)
+library(tidyverse)
+library(DESeq2)    
+library(ggrepel)
+
+se <- function(x) sd(x, na.rm=T)/sqrt(length(x)) ## define function to calculate standard error
+n <- function(x) sum(!is.na(x))                  ## define function to calculate replicates
+
+data<-read_excel(path="CompiledData.xlsx", sheet="RNAseqRawCountsFemale") ## import raw readcounts generated in galaxy 
+
+rows<-data$Geneid
+data<-as.data.frame(data[2:22])
+rownames(data) <- rows
+
+data<-data %>% mutate_if(is.character, as.numeric) %>% filter(!is.na(M304))
+
+key<- data.frame (id  = c("M304", "M305", "M306", "M307","M308", "M309","M310", "M311","M312", "M313","M314", "M315","M316", "M317","M318", "M319","M320", "M321","M322", "M323", "M325"),
+                  group = c("Active","Active","Active","Activity Reduction","Active","Active","Activity Reduction","Inactive", "Active","Inactive","Activity Reduction","Inactive","Inactive","Inactive","Activity Reduction","Active","Activity Reduction","Activity Reduction","Activity Reduction","Inactive","Inactive"),
+                  t.d = c("yes", 'yes', "yes",'yes', "yes",'yes', "yes", "no", "yes","no", "yes", "no", "no","no", 'yes', "yes",'yes', "yes", "yes", "no","no" ),
+                  s.t = c("yes","yes","yes","no","yes","yes","no","yes", "yes","yes","no","yes",'yes', "yes", "no","yes", "no","no", "no", "yes", "yes"),
+                  s.d = c("no","no","no","yes","no","no","yes","yes","no","yes","yes","yes","yes","yes","yes","no","yes","yes","yes","yes", "yes")) 
+
+key<-key %>% mutate_if(is.character, as.factor)
+
+rows<-key$id                  
+key<-as.data.frame(key[2:5])
+rownames(key)<-rows
+
+```
+
+```{r deseq2, echo=FALSE}
+                
+DESeqDS<-DESeqDataSetFromMatrix(countData = data,
+                                colData = key,
+                                design= ~group)
+DESeqDS                  ## look at data set information
+head(counts(DESeqDS))    ## check row/column headers
+
+colSums(counts(DESeqDS)) ## Determine how many reads were sequenced for each sample (= library sizes)
+colSums(counts(DESeqDS)) %>% barplot ## visualize library sizes
+
+dim(DESeqDS)             ## filter out transcripts with no reads
+keep<-rowSums(counts(DESeqDS))>0
+DESeqDS<-DESeqDS[ keep, ]
+dim(DESeqDS)
+
+DESeqDS <- estimateSizeFactors(DESeqDS) # calculate size factors, add them to object
+plot( sizeFactors(DESeqDS), colSums(counts(DESeqDS)), # assess them
+ylab = "library sizes", xlab = "size factors", cex = .6 )
+
+par(mfrow=c(1,2)) # to plot the two box plots next to each other
+counts.sf_normalized <- counts(DESeqDS, normalized=TRUE)
+boxplot(counts.sf_normalized, main = "SF normalized", cex = .6)
+boxplot(counts(DESeqDS), main = "read counts only", cex = .6)
+
+par(mfrow=c(1,2)) 
+boxplot(log2(counts(DESeqDS)+1), notch=TRUE, ## bp of non-normalized
+main = "Non-normalized read counts",
+ylab="log2(read counts)", cex = .6)
+boxplot(log2(counts(DESeqDS, normalize= TRUE) +1), notch=TRUE, ## bp of size-factor normalized values
+main = "Size-factor-normalized read counts",
+ylab="log2(read counts)", cex = .6)
+
+## non-normalized read counts plus pseudocount
+log.counts <- log2(counts(DESeqDS, normalized = FALSE) + 1)
+assay(DESeqDS, "log.counts") <- log2(counts(DESeqDS, normalized = FALSE) + 1)
+## normalized read counts
+log.norm.counts <- log2(counts(DESeqDS, normalized=TRUE) + 1)
+assay(DESeqDS, "log.norm.counts") <- log.norm.counts
+
+## generate the base meanSdPlot using sequencing depth normalized log2(read counts)
+log.norm.counts <- log2(counts(DESeqDS, normalized=TRUE) + 1)
+## set up plotting frames
+par(mfrow=c(1,1))
+## generate the plot
+msd_plot <- vsn::meanSdPlot(log.norm.counts,
+ranks=FALSE, # show the data on the original scale
+plot = FALSE)
+## since vsn::meanSdPlot generates a ggplot2 object, appearance can be customized in the usual ways
+msd_plot$gg +
+ggtitle("Sequencing depth normalized log2(read counts)") +
+ylab("standard deviation")
+## The plot shows that there is some variance-mean dependence for transcripts with low read counts, i.e., signs of heteroskedasticity (red line is not horizontal)
+
+## reduce dependence of the variance on the mean
+DESeq.rlog <- rlog(DESeqDS, blind = FALSE)
+## set blind = FALSE if the conditions are expected to introduce strong differences in a large proportion of the genes
+
+par(mfrow=c(1,2))
+plot(log.norm.counts[,1:2], cex=.1,
+main = "size factor and log2-transformed")## the rlog-transformed counts are stored in the accessor "assay"
+plot(assay(DESeq.rlog)[,1],
+assay(DESeq.rlog)[,2],
+cex=.1, main = "rlog transformed",
+xlab = colnames(assay(DESeq.rlog[,1])),
+ylab = colnames(assay(DESeq.rlog[,2])) )
+
+rlog.norm.counts <- assay(DESeq.rlog) ## rlog-transformed read counts
+msd_plot <- vsn::meanSdPlot( rlog.norm.counts, ranks=FALSE, plot = FALSE)
+msd_plot$gg + ggtitle("rlog transformed read counts") + coord_cartesian(ylim = c(0,3)) + ylab("standard deviation")
+# expression values have now been adjusted for:• differences in sequencing depth • differences in RNA composition • heteroskedasticity • large dynamic range
+save.image(file = "Output/RNAseq/CountNormalizationPart1.RData")
+
+## Pearson correlation sample clustering
+## plot heatmap
+corr_coeff<-cor(rlog.norm.counts, method ="pearson")
+as.dist(1-corr_coeff, upper=TRUE) %>% as.matrix %>% pheatmap::pheatmap(.,main="Pearson correlation")
+
+## plot only dendrograms
+par(mfrow=c(1:2))
+## rlog.norm values
+as.dist(1-corr_coeff) %>% hclust %>% plot( ., labels=colnames(rlog.norm.counts), main = "rlog transformed read counts")
+## log.norm values
+as.dist(1-cor(assay(DESeqDS, "log.norm.counts"), method = "pearson")) %>% hclust %>% plot( ., labels= colnames(assay(DESeqDS, "log.norm.counts")), main = "no rlog")
+
+## PCA
+rv<-rowVars(assay(DESeq.rlog))
+top_variable<-order(rv, decreasing = TRUE)[seq_len(500)]
+pca<-prcomp(t(assay(DESeq.rlog)[top_variable, ]))
+head(pca$x)
+
+## ggplot2 plot
+P<-plotPCA(DESeq.rlog, intgroup=c("group"))
+P2<-P + geom_label(aes(label=name)) ## identify outliers
+P2
+P <- P + theme_bw () + ggtitle (" Rlog transformed counts ") +
+scale_color_manual(values=c("black", "tomato2","grey70"))+
+scale_shape_manual(values=c(21, 23, 22)) 
+print (P)
+ggsave("Output/RNAseq/FemaleGastroc-PCA.pdf")
+
+```
+```{r DEG-volcano-plots, echo=FALSE}
+### Set up comparisons
+iVa <- subset(data, select=-c(M307,M310,M314, M318,M320,M321, M322)) #remove columns containing detraining subjects
+iVar <- subset(data, select=-c(M304,M305,M306,M308,M309,M312,M319)) #remove columns containing training subjects
+aVar <- subset(data, select=-c(M311,M313,M315,M316,M317,M323,M325)) #remove columns containing sedentary subjects
+
+IvA<-key %>% filter(s.t=="yes") %>% select(group)
+IvAR<-key %>% filter(s.d=="yes") %>% select(group)
+AvAR<-key %>% filter(t.d=="yes") %>% select(group)
+
+## Compare Active Controls to Inactive Controls
+ddsIvA <- DESeqDataSetFromMatrix(countData = iVa,
+                                   colData = IvA, 
+                                   design = ~ group) ## Will warn group being dropped. Ignore. Key has the filtered group as a level.
+colData(ddsIvA)$group <-relevel(colData(ddsIvA)$group, "Inactive")
+ddsIvA<-DESeq(ddsIvA)
+resIvA <-results(ddsIvA, contrast=c("group", "Active","Inactive"))
+plotMA(resIvA) ##volcano plot
+output.file <-resIvA #write out results to csv
+inactiveVactive<-as.data.frame(output.file) %>% filter(padj<=0.05)
+
+resIvA<-as.data.frame(resIvA) %>% 
+  mutate(direction = case_when(log2FoldChange >= 0.27 & padj <= 0.050000 ~ "up",
+                               log2FoldChange <= -0.27 & padj <= 0.050000 ~ "down",
+                               TRUE ~ "ns"))%>%  mutate(mRNA = rownames(.))
+ 
+cols <- c("up" = "red", "down" = "blue4", "ns" = "grey") 
+sizes <- c("up" = 2, "down" = 2, "ns" = 0.5) 
+alphas <- c("up" = 2, "down" = 2, "ns" = 0.5)
+shapes<-c("up"= 24, "down" =25, "ns"=21)
+
+resIvA$direction <- factor(resIvA$direction, levels = c("up", "down","ns"))
+
+library(ggrepel)
+options(ggrepel.max.overlaps = 50)
+
+label_data1 <- subset(resIvA, -log10(padj) >= 1.3 & !between(log2FoldChange, -0.27, 0.27)) 
+
+vol_plot <- as.data.frame(resIvA) %>%
+  ggplot(aes(x = log2FoldChange,
+             y = -log10(padj),
+             fill = direction,    
+             size = direction,
+             alpha = direction)) + 
+  geom_hline(yintercept = -log10(0.05),
+             linetype = "dotted") + 
+  geom_vline(xintercept = c(-0.27, 0.27),
+             linetype = "dotted") +
+   geom_point(shape = 21,
+             colour = "black", line=0.25) +
+  scale_fill_manual(values = cols) + # Modify point colour
+  scale_size_manual(values = sizes) + # Modify point size
+  scale_shape_manual(values=c(24,25,21))+
+  scale_alpha_manual(values = alphas) +
+  scale_x_continuous(breaks = c(seq(-3, 3, 1.5)),       
+                     limits = c(-3, 3)) +
+  ylim(0,10)+
+  geom_text_repel(data = label_data1,  # Use subset data for labels based on condition 1
+                  aes(label = mRNA),
+                  box.padding = unit(0.35, "lines"))+
+  theme_bw() + # Select theme with a white background  
+  theme(panel.border = element_rect(colour = "black", fill = NA, size= 0.5),    
+        panel.grid.minor = element_blank(),
+        panel.grid.major = element_blank(),
+        legend.text=element_text(size=10, family="Helvetica", color="black"),
+        legend.box.background=element_blank(),
+        legend.background = element_blank(),
+        axis.text=element_text(size=14, family="Helvetica",color="black")) +
+  guides(fill = guide_legend(override.aes = aes(label = "")))
+vol_plot
+ggsave("Output/Figures/Active-Inactive volcano plot.pdf")
+
+write.csv(output.file, file="Output/RNAseq/IvA.csv")#generate .csv file for use in GSEA script
+normalized.IvA <- counts(ddsIvA, normalized = TRUE)#write out normalized counts
+#normalized.counts.data.IvA <- write.csv(normalized.IvA,'Output/RNAseq/norm.IvA.csv')
+dim(subset(as.data.frame(resIvA), padj < 0.05000&log2FoldChange<=-0.27))[1]#quantify decreased transcripts
+dim(subset(as.data.frame(resIvA), padj < 0.05000&log2FoldChange>=0.27))[1]#quantify increased transcripts
+
+
+## Compare Activity Reduction to Inactive Controls
+ddsIvAR <- DESeqDataSetFromMatrix(countData = iVar,
+                                   colData = IvAR, 
+                                   design = ~ group) ## Will warn a group is being dropped - key group still has the filtered group as a level. Ignore.
+colData(ddsIvAR)$group <-relevel(colData(ddsIvAR)$group, "Inactive")
+ddsIvAR<-DESeq(ddsIvAR)
+resIvAR <-results(ddsIvAR, contrast=c("group", "Activity Reduction","Inactive"))
+plotMA(resIvAR) ##volcano plot
+output.file <-resIvAR #write out results to csv
+InactivevActivityReduction<-as.data.frame(output.file) %>% filter(padj<=0.05)
+resIvAR<-as.data.frame(resIvAR) %>% 
+  mutate(direction = case_when(log2FoldChange >= 0.27 & padj <= 0.0500000 ~ "up",
+                               log2FoldChange <= -0.27 & padj <= 0.0500000 ~ "down",
+                               TRUE ~ "ns"))%>%  mutate(mRNA = rownames(.))
+
+label_data1 <- subset(resIvAR, -log10(padj) >= 1.3 & !between(log2FoldChange, -0.27, 0.27)) 
+ 
+vol_plot <- as.data.frame(resIvAR) %>%
+  ggplot(aes(x = log2FoldChange,
+             y = -log10(padj),
+             fill = direction,    
+             size = direction,
+             alpha = direction,
+             pch=direction)) + 
+  geom_hline(yintercept = -log10(0.05),
+             linetype = "dotted") + 
+  geom_vline(xintercept = c(-0.27, 0.27),
+             linetype = "dotted") +
+  geom_point(shape = 21,  
+             colour = "black", line=0.25) +
+  scale_fill_manual(values = cols) + # Modify point colour
+  scale_size_manual(values = sizes) + # Modify point size
+  scale_shape_manual(values=c(24,25,20))+
+  scale_alpha_manual(values = alphas) +
+  scale_x_continuous(breaks = c(seq(-3, 3, 1.5)),       
+                     limits = c(-3, 3)) +
+  ylim(0,10)+
+  geom_text_repel(data = label_data1,  # Use subset data for labels based on condition 1
+                  aes(label = mRNA),
+                  box.padding = unit(0.35, "lines"))+
+  theme_bw() + # Select theme with a white background  
+  theme(panel.border = element_rect(colour = "black", fill = NA, size= 0.5),    
+        panel.grid.minor = element_blank(),
+        panel.grid.major = element_blank(),
+        legend.text=element_text(size=10, family="Helvetica", color="black"),
+        legend.box.background=element_blank(),
+        legend.background = element_blank(),
+        axis.text=element_text(size=14, family="Helvetica",color="black")) +
+  guides(fill = guide_legend(override.aes = aes(label = "")))
+vol_plot
+ggsave("Output/Figures/Inactive-ActivityReduction volcano plot.pdf")
+
+write.csv(output.file, file="Output/RNAseq/IvAR.csv")#generate .csv file for use in GSEA script
+normalized.IvAR <- counts(ddsIvAR, normalized = TRUE)#write out normalized counts
+#normalized.counts.data.IvAR <- write.csv(normalized.IvAR,'Output/RNAseq/norm.IvAR.csv')
+dim(subset(as.data.frame(resIvAR), padj < 0.05000&log2FoldChange<=-0.27))[1]#quantify decreased transcripts
+dim(subset(as.data.frame(resIvAR), padj < 0.05000&log2FoldChange>=0.27))[1]#quantify increased transcripts
+
+
+## Compare Activity Reduction to Active Controls
+ddsAvAR <- DESeqDataSetFromMatrix(countData = aVar,
+                                   colData = AvAR, 
+                                   design = ~ group) ## Will warn a group is being dropped - key group still has the filtered group as a level. Ignore.
+colData(ddsAvAR)$group <-relevel(colData(ddsAvAR)$group, "Active")
+ddsAvAR<-DESeq(ddsAvAR)
+resAvAR <-results(ddsAvAR, contrast=c("group", "Activity Reduction","Active"))
+plotMA(resAvAR) ##volcano plot
+output.file <-resAvAR #write out results to csv
+ActivevActivityReduction<-as.data.frame(output.file) %>% filter(padj<=0.05)
+
+resAvAR<-as.data.frame(resAvAR) %>% 
+  mutate(direction = case_when(log2FoldChange >= 0.27 & padj <= 0.0500000 ~ "up",
+                               log2FoldChange <= -0.27 & padj <= 0.050000 ~ "down",
+                               TRUE ~ "ns"))%>%  mutate(mRNA = rownames(.))
+
+label_data1 <- subset(resAvAR, !between(log2FoldChange, -0.27, 0.27) & -log10(padj) >= 1.3) 
+
+vol_plot <- as.data.frame(resAvAR) %>%
+  ggplot(aes(x = log2FoldChange,
+             y = -log10(padj),
+             fill = direction,    
+             size = direction,
+             alpha = direction)) + 
+  geom_hline(yintercept = -log10(0.05),
+             linetype = "dotted") + 
+  geom_vline(xintercept = c(-0.27, 0.27),
+             linetype = "dotted") +
+  geom_point(shape = 21,  
+             colour = "black", line=0.25) +
+  scale_fill_manual(values = cols) + # Modify point colour
+  scale_size_manual(values = sizes) + # Modify point size
+  scale_shape_manual(values=c(24,25,20))+
+  scale_alpha_manual(values = alphas) +
+  scale_x_continuous(breaks = c(seq(-3, 3, 0.5)),       
+                     limits = c(-3, 3)) +
+  ylim(0,10)+
+  geom_text_repel(data = label_data1,  # Use subset data for labels based on condition 1
+                  aes(label = mRNA),
+                  box.padding = unit(0.35, "lines"))+
+  theme_bw() + # Select theme with a white background  
+  theme(panel.border = element_rect(colour = "black", fill = NA, size= 0.5),    
+        panel.grid.minor = element_blank(),
+        panel.grid.major = element_blank(),
+        legend.text=element_text(size=10, family="Helvetica", color="black"),
+        legend.box.background=element_blank(),
+        legend.background = element_blank(),
+        axis.text=element_text(size=14, family="Helvetica",color="black")) +
+  guides(fill = guide_legend(override.aes = aes(label = "")))
+vol_plot
+ggsave("Output/Figures/ActivityReduction-Active volcano plot.pdf")
+
+write.csv(output.file, file="Output/RNAseq/AvAR.csv")#generate .csv file for use in GSEA script
+normalized.AvAR <- counts(ddsAvAR, normalized = TRUE)#write out normalized counts
+#normalized.counts.data.AvAR <- write.csv(normalized.AvAR,'Output/RNAseq/norm.AvAR.csv')
+dim(subset(as.data.frame(resAvAR), padj < 0.05000&log2FoldChange<=-0.27))[1]#quantify decreased transcripts
+dim(subset(as.data.frame(resAvAR), padj < 0.05000&log2FoldChange>=0.27))[1]#quantify increased transcripts
+
+## generate normalized counts table for plotting
+colData(DESeqDS)$group <-relevel(colData(DESeqDS)$group, "Inactive")
+DESeqDS<-DESeq(DESeqDS)
+normalized.counts<-counts(DESeqDS, normalized = TRUE)
+write.csv(normalized.counts,'Output/RNAseq/normalized-counts.csv')
+
+```
+
+```{r venn-barcharts, echo=FALSE}
+
+## make dataframes containing only the differentially expressed transcripts in each comparison
+iaDiff<-resIvA %>% filter(direction!="ns") %>% select(mRNA) %>% unlist()
+iarDiff<-resIvAR %>% filter(direction!="ns") %>% select(mRNA) %>% unlist()
+aarDiff<-resAvAR %>% filter(direction!="ns") %>% select(mRNA) %>% unlist()
+
+library(VennDiagram)
+## define colors
+myCol<-c("grey30", "tomato","tomato2")
+## plot venn diagram
+venn.diagram(x=list(iaDiff, iarDiff, aarDiff),
+                    category.names = c("Active : Inactive","Activity Reduction : Inactive", "Activity Reduction : Active"),
+                    filename = "Output/Figures/vennAll.svg",
+                    output=TRUE,
+                    imagetype="svg",
+                    height=5,
+                    width=5,
+                    resolution=300,
+                    compression = "lzw",
+                    lwd=2,
+                    lty="blank",
+                    fill=myCol,
+                    cex=0.6,
+                    fontface="bold",
+                    fontfamily="sans",
+                    cat.cex=0.6,
+                    cat.fontface="bold",
+                    cat.default.pos="outer",
+                    cat.pos=c(-27,27,135),
+                    cat.dist=c(0.055, 0.055,0.085),
+                    cat.fontfamily="sans",
+                    rotation=1)
+
+iaDiff<-resIvA %>% filter(direction!="ns") %>% select(mRNA) ## filter out non significant values
+iarDiff<-resIvAR %>% filter(direction!="ns") %>% select(mRNA) 
+aarDiff<-resAvAR %>% filter(direction!="ns") %>% select(mRNA) 
+
+commonARvIA<-as.data.frame(intersect(iarDiff$mRNA,aarDiff$mRNA)) ## create dataframe with common DEGs 
+colnames(commonARvIA)[1]<-"mRNA"
+commonARAvI<-as.data.frame(intersect(iaDiff$mRNA,iarDiff$mRNA))
+colnames(commonARAvI)[1]<-"mRNA"
+commonIAvAAR<-as.data.frame(intersect(iaDiff$mRNA,aarDiff$mRNA))
+colnames(commonIAvAAR)[1]<-"mRNA"
+
+commonARvIA1<-commonARvIA$mRNA
+commonARAvI1<-commonARAvI$mRNA
+commonIAvAAR1<-commonIAvAAR$mRNA
+
+#data<-read_csv("normalized-counts.csv")
+data<-as.data.frame(normalized.counts) %>% 
+  rownames_to_column("mRNA")
+
+data<-pivot_longer(data, -mRNA, names_to = "id", values_to = "counts")
+
+key<- data.frame (id  = c( "M304", "M305", "M306", "M307","M308", "M309","M310", "M311","M312", "M313","M314", "M315","M316", "M317","M318", "M319","M320", "M321","M322", "M323", "M325"),
+                  group = c( "Active","Active","Active","Activity Reduction","Active","Active","Activity Reduction","Inactive", "Active","Inactive","Activity Reduction","Inactive","Inactive","Inactive","Activity Reduction","Active","Activity Reduction","Activity Reduction","Activity Reduction","Inactive","Inactive")) 
+
+data<-right_join(key, data, by="id") 
+
+summaryStats <-
+  data %>%
+  select(-id) %>% 
+  group_by(group, mRNA) %>%
+  summarize(mean = mean(counts),
+            se = se(counts),
+            n= n(counts))
+
+data<-data %>% pivot_wider(names_from= mRNA, values_from=counts)
+
+commonIAvAAR<-data %>% select(id, group, any_of(commonARvIA1)) %>% pivot_longer(cols=3:9,names_to="mRNA", values_to="counts")
+commonARAvI<-data %>% select(id, group, any_of(commonARAvI1))
+commonARvIA<-data %>% select(id, group, any_of(commonIAvAAR1)) %>% pivot_longer(cols=3:18,names_to="mRNA", values_to="counts")
+
+commonIAvAAR$group <- factor(commonIAvAAR$group, levels = c("Inactive", "Active", "Activity Reduction"))
+
+ggplot(commonIAvAAR, aes(x=group, y=counts, fill=group, pch=group))+
+geom_bar(stat="summary", fun="mean", size=0.5, col="black") +
+  geom_point(stat="identity", size=2)+
+  stat_summary(fun.data = mean_se, geom="errorbar", width=0.3, size=0.5)+ 
+  scale_fill_manual(values=c("grey70", "black","tomato2"))+     
+  scale_shape_manual(values=c(21, 23, 22))+
+  scale_y_continuous(limits = c(0, 15000), breaks=seq(0, 15000, 5000), expand=c(0,0))+
+  labs(y="mRNA (normalized counts)", x="") +
+  theme(#aspect.ratio = 5/2,
+        panel.background = element_blank(), 
+        panel.grid.major = element_blank(), 
+        panel.border=element_blank(), 
+        panel.grid.major.y=element_line(color="#c8c8c8", size=0.05, linetype="dotted"), 
+        legend.position = "none",
+        axis.line.x=element_blank(),
+        axis.text=element_text(size=20, family="Helvetica",color="black"),
+        axis.title=element_text(size=20, family="Helvetica",  color="black"), 
+        axis.text.x=element_blank(), 
+        axis.ticks.x=element_blank(),
+        axis.ticks.y=element_line(color="black", size=0.5, linetype="solid"),
+        strip.background = element_blank(),
+        strip.text=element_text(color="black", size=20, family="Helvetica",face="italic",angle=45))+
+  facet_grid(~mRNA, switch="both", scales = "free")
+ggsave("Output/Figures/mRNAs changed uniquely by activity reduction.pdf",dpi=300, height = 3, width=6)
+
+commonARvIA$group <- factor(commonARvIA$group, levels = c("Inactive", "Active", "Activity Reduction"))
+
+ggplot(commonARvIA, aes(x=group, y=counts, fill=group, pch=group))+
+geom_bar(stat="summary", fun="mean", size=0.5, col="black") +
+  geom_point(stat="identity", size=2)+
+  stat_summary(fun.data = mean_se, geom="errorbar", width=0.3, size=0.5)+ 
+  scale_fill_manual(values=c("grey70", "black","tomato2"))+     
+  scale_shape_manual(values=c(21, 23, 22))+
+  scale_y_continuous(limits = c(0, 3000), breaks=seq(0, 3000, 1000), expand=c(0,0))+
+  labs(y="mRNA (normalized counts)", x="") +
+  theme(#aspect.ratio = 5/2,
+        panel.background = element_blank(), 
+        panel.grid.major = element_blank(), 
+        panel.border=element_blank(), 
+        panel.grid.major.y=element_line(color="#c8c8c8", size=0.05, linetype="dotted"), 
+        legend.position = "none",
+        axis.line.x=element_blank(),
+        axis.text=element_text(size=20, family="Helvetica",color="black"),
+        axis.title=element_text(size=20, family="Helvetica",  color="black"), 
+        axis.text.x=element_blank(), 
+        axis.ticks.x=element_blank(),
+        axis.ticks.y=element_line(color="black", size=0.5, linetype="solid"),
+        strip.background = element_blank(),
+        strip.text=element_text(color="black", size=20, family="Helvetica",face="italic",angle=45))+
+  facet_grid(~mRNA, switch="both", scales = "free")
+ggsave("Output/Figures/mRNAs changed by activity.pdf",dpi=300, height = 3, width=4.5)
+
+commonARAvI$group <- factor(commonARAvI$group, levels = c("Inactive", "Active", "Activity Reduction"))
+
+ggplot(commonARAvI, aes(x=group, y=Igfbp5, fill=group, pch=group))+
+geom_bar(stat="summary", fun="mean", size=0.5, col="black") +
+  geom_point(stat="identity", size=2)+
+  stat_summary(fun.data = mean_se, geom="errorbar", width=0.3, size=0.5)+ 
+  scale_fill_manual(values=c("grey70", "black","tomato2"))+     
+  scale_shape_manual(values=c(21, 23, 22))+
+  scale_y_continuous(limits = c(0, 25000), breaks=seq(0, 25000, 5000), expand=c(0,0))+
+  labs(y="mRNA (normalized counts)", x="Igfbp5") +
+  theme(aspect.ratio = 5/2,
+        panel.background = element_blank(), 
+        panel.grid.major = element_blank(), 
+        panel.border=element_blank(), 
+        panel.grid.major.y=element_line(color="#c8c8c8", size=0.05, linetype="dotted"), 
+        legend.position = "none",
+        axis.line.x=element_blank(),
+        axis.text=element_text(size=20, family="Helvetica",color="black"),
+        axis.title.y=element_text(size=20, family="Helvetica",  color="black"), 
+        axis.title.x=element_text(size=20, family="Helvetica",  color="black",face="italic",angle=45), 
+        axis.text.x=element_blank(), 
+        axis.ticks.x=element_blank(),
+        axis.ticks.y=element_line(color="black", size=0.5, linetype="solid"),
+        strip.background = element_blank(),
+        strip.text=element_text(color="black", size=20, family="Helvetica",face="italic",angle=45))
+ggsave("Output/Figures/mRNA common to activity and activity reduction groups.pdf",dpi=300, height = 3, width=2)
+
+
+```
