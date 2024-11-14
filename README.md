@@ -1,5 +1,5 @@
 # Inactivity-mediated-molecular-adaptations-1
-Data and code repository for manuscript "Inactivity-mediated molecular adaptations: insights from a novel pre-clinical model of physical activity reduction" 
+Data and code repository for manuscript "Inactivity-mediated molecular adaptations: insights from a pre-clinical model of physical activity reduction" 
 
 Manuscript Authors: 
 Alice Meyer1, Nicole Kim2, Melissa Nguyen3, Monica Misch2, Kevin Marmo2, Jacob Dowd3, Christian Will2, Milica Janosevic2, Erin J Stephenson1,2,4,5,6,*
